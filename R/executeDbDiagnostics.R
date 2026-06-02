@@ -75,9 +75,236 @@ executeDbDiagnostics <- function(connectionDetails,
 	# 	slice_max(DB_DATE, n=1)
 
 	dbNum <- nrow(dbNames)
+	
+	
+  # refactoring portion ------------------------------------------------------
+	for(k in 1:length(dataDiagnosticsSettingsList)){
+	  
+	  studySpecs <- dataDiagnosticsSettingsList[[k]]
+	  
+	  # TODO ---------------
+	  # evaluate the specs input
+	  # look at data types and stop if target concept id is null
+	  if (is.null(studySpecs$targetConceptIds)){
+	    stop("Need to specify targetConceptIds")
+	  }
+	  
+	  checkmate::assertInteger(studySpecs$analysisId, null.ok = FALSE, len = 1)
+	  checkmate::assertString(studySpecs$analysisName, null.ok = FALSE, min.chars = 1)
+	  checkmate::assertNumeric(studySpecs$minAge, null.ok = TRUE)
+	  checkmate::assertNumeric(studySpecs$maxAge, null.ok = TRUE)
+	  checkmate::assertIntegerish(studySpecs$genderConceptIds, null.ok = FALSE)
+	  checkmate::assertIntegerish(studySpecs$raceConceptIds, null.ok = TRUE)
+	  checkmate::assertIntegerish(studySpecs$ethnicityConceptIds, null.ok = TRUE)
+	  checkmate::assertString(studySpecs$studyStartDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
+	  checkmate::assertString(studySpecs$studyEndDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
+	  checkmate::assertInteger(studySpecs$requiredDurationDays, null.ok = FALSE)
+	  
+	  allowed_visits <- c("IP", "OP", "ER")
+	  checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
+	  checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
+	  
+	  checkmate::assertString(studySpecs$targetName, null.ok = FALSE)
+	  checkmate::assertIntegerish(studySpecs$targetConceptIds, null.ok = FALSE, min.len = 1)
+	  checkmate::assertString(studySpecs$comparatorName, null.ok = TRUE)
+	  checkmate::assertIntegerish(studySpecs$comparatorConceptIds, null.ok = TRUE)
+	  checkmate::assertString(studySpecs$indicationName, null.ok = TRUE)
+	  checkmate::assertIntegerish(studySpecs$indicationConceptIds, null.ok = TRUE)
+	  checkmate::assertLogical(studySpecs$includeIndicationInCalc, null.ok = FALSE)
+	  checkmate::assertString(studySpecs$outcomeName, null.ok = TRUE)
+	  checkmate::assertIntegerish(studySpecs$outcomeConceptIds, null.ok = TRUE)
+	  # ---------------
+	  
+	  ddThresholds <- read.csv(system.file("csv", "ddThresholds.csv", package = "DbDiagnostics"), stringsAsFactors = FALSE)
+	  
+	  # ID of this individual study
+	  analysisId <- studySpecs$analysisId
+	  
+	  # Name of this individual study
+	  analysisName <- studySpecs$analysisName
+	  
+	  message(paste0("   -- Analysis #", analysisId, " - ", analysisName, " (", k, "/", length(dataDiagnosticsSettingsList), ")" ))
+	  
+	  
+	  numCriteria <- 0
+	  
+	  # Age
+	  minAgeCriteria <- TRUE
+	  if(is.null(studySpecs$minAge)){
+	    minAgeCriteria <- FALSE
+	  }
+	  else{
+	    minAge <- studySpecs$minAge
+	    numCriteria <- numCriteria + 1
+	  }
+	  
+	  maxAgeCriteria <- TRUE
+	  if(is.null(studySpecs$minAge)){
+	    maxAgeCriteria <- FALSE
+	  }
+	  else{
+	    maxAge <- studySpecs$minAge
+	    numCriteria <- numCriteria + 1
+	  }
+	  
+	  # Gender
+	  genderConceptIds <- studySpecs$genderConceptIds # Q - limit to these two or to all genders in the db? Means including 0
+	  numCriteria <- numCriteria + 1
+	  
+	  # Race
+	  raceCriteria <- TRUE
+	  if(is.null(studySpecs$raceConceptIds)){
+	    raceCriteria <- FALSE
+	  }
+	  else{
+  	  raceConceptIds <- studySpecs$raceConceptIds
+  	  numCriteria <- numCriteria + 1
+	  }
+	  
+	  # Ethnicity
+	  ethnicityCriteria <- TRUE
+	  if(is.null(studySpecs$raceConceptIds)){
+	    ethnicityCriteria <- FALSE
+	  }
+	  else{
+	    ethnicityConceptIds <- studySpecs$ethnicityConceptIds
+	    numCriteria <- numCriteria + 1
+	  }
+	  
+	  # Study Start Date
+	  studyStartCriteria <- TRUE
+	  if (is.null(studySpecs$studyStartDate)) {
+	    studyStartCriteria <- FALSE
+	    # derive default from dbProfile (same as original behavior)
+	    studyStartDate <- min(as.numeric(dbProfile[dbProfile$ANALYSIS_ID == 111, "STRATUM_1"]),
+	                          na.rm = TRUE)
+	  } else {
+	    studyStartDate <- max(
+	      as.numeric(studySpecs$studyStartDate),
+	      min(as.numeric(dbProfile[dbProfile$ANALYSIS_ID == 111, "STRATUM_1"]), na.rm = TRUE)
+	    )
+	    if (is.na(studyStartDate)) stop("Invalid studyStartDate after conversion")
+	    numCriteria <- numCriteria + 1L
+	  }
+	  
+	  # Study End Date
+	  studyEndCriteria <- TRUE
+	  if (is.null(studySpecs$studyEndDate)) {
+	    studyEndCriteria <- FALSE
+	    # derive default from dbProfile (same as original behavior)
+	    studyEndDate <- max(as.numeric(dbProfile[dbProfile$ANALYSIS_ID == 112, "STRATUM_1"]),
+	                        na.rm = TRUE)
+	  } else {
+	    studyEndDate <- min(
+	      as.numeric(studySpecs$studyEndDate),
+	      max(as.numeric(dbProfile[dbProfile$ANALYSIS_ID == 112, "STRATUM_1"]), na.rm = TRUE)
+	    )
+	    if (is.na(studyEndDate)) stop("Invalid studyEndDate after conversion")
+	    numCriteria <- numCriteria + 1L
+	  }
+	  
+	  # Required follow-up time
+	  requiredDurationDays <- studySpecs$requiredDurationDays
+	  numCriteria <- numCriteria + 1
+	  
+	  # Required domains
+	  requiredDomains <- studySpecs$requiredDomains
+	  numCriteria <- numCriteria + 1
+	  
+	  if("condition" %in% requiredDomains){requiredCondition <- 1}else{requiredCondition <- 0}
+	  if("drug" %in% requiredDomains){requiredDrug <-1}else{requiredDrug <- 0}
+	  if("device" %in% requiredDomains){requiredDevice <-1}else{requiredDevice <- 0}
+	  if("measurement" %in% requiredDomains){requiredMeasurement <-1}else{requiredMeasurement <- 0}
+	  if("procedure" %in% requiredDomains){requiredProcedure <-1}else{requiredProcedure <- 0}
+	  if("observation" %in% requiredDomains){requiredObservation <-1}else{requiredObservation <- 0}
+	  
+	  # Desired domains
+	  desiredDomains <- studySpecs$desiredDomains
+	  
+	  if("condition" %in% desiredDomains){desiredCondition <- 1
+	  numCriteria <- numCriteria + 1}else{desiredCondition <- 0}
+	  if("drug" %in% desiredDomains){desiredDrug <-1
+	  numCriteria <- numCriteria + 1}else{desiredDrug <- 0}
+	  if("device" %in% desiredDomains){desiredDevice <-1
+	  numCriteria <- numCriteria + 1}else{desiredDevice <- 0}
+	  if("measurement" %in% desiredDomains){desiredMeasurement <-1
+	  numCriteria <- numCriteria + 1}else{desiredMeasurement <- 0}
+	  if("procedure" %in% desiredDomains){desiredProcedure <-1
+	  numCriteria <- numCriteria + 1}else{desiredProcedure <- 0}
+	  if("observation" %in% desiredDomains){desiredObservation <-1
+	  numCriteria <- numCriteria + 1}else{desiredObservation <- 0}
+	  if("measurementValues" %in% desiredDomains){desiredMeasurementValues <-1
+	  numCriteria <- numCriteria + 1}else{desiredMeasurementValues <- 0}
+	  if("death" %in% desiredDomains){desiredDeath <-1
+	  numCriteria <- numCriteria + 1}else{desiredDeath <- 0}
+	  
+	  # Required visits
+	  requiredVisits <- studySpecs$requiredVisits
+	  
+	  if("IP" %in% requiredVisits){requiredIP <- 1}else{requiredIP <- 0}
+	  if("OP" %in% requiredVisits){requiredOP <-1}else{requiredOP <- 0}
+	  if("ER" %in% requiredVisits){requiredER <-1}else{requiredER <- 0}
+	  
+	  # Desired visits
+	  desiredVisits <- studySpecs$desiredVisits
+	  
+	  if("IP" %in% desiredVisits){desiredIP <- 1
+	  numCriteria <- numCriteria + 1}else{desiredIP <- 0}
+	  if("OP" %in% desiredVisits){desiredOP <-1
+	  numCriteria <- numCriteria + 1}else{desiredOP <- 0}
+	  if("ER" %in% desiredVisits){desiredER <-1
+	  numCriteria <- numCriteria + 1}else{desiredER <- 0}
+	  
+	  #target
+	  target <- studySpecs$targetName
+	  requiredTargetConcepts <- studySpecs$targetConceptIds
+	  numCriteria <- numCriteria + 1
+	  
+	  #comparator
+	  if(!is.null(studySpecs$comparatorConceptIds)){
+	    comparator <- studySpecs$comparatorName
+	    requiredComparatorConcepts <- studySpecs$comparatorConceptIds
+	    numCriteria <- numCriteria + 1
+	  }else{
+	    requiredComparatorConcepts <- NULL
+	  }
+	  
+	  #indication
+	  if(!is.null(studySpecs$indicationConceptIds)){
+	    indication <- studySpecs$indicationName
+	    requiredIndicationConcepts <- studySpecs$indicationConceptIds
+	    numCriteria <- numCriteria + 1
+	  }else{
+	    requiredIndicationConcepts <- NULL
+	  }
+	  
+	  #outcome
+	  if(!is.null(studySpecs$outcomeConceptIds)){
+	    outcome <- studySpecs$outcomeName
+	    requiredOutcomeConcepts <-  studySpecs$outcomeConceptIds
+	    numCriteria <- numCriteria + 1
+	  }else{
+	    requiredOutcomeConcepts <- NULL
+	  }
+	  
+	  sql <- "
+	  WITH personCnt as (
+	    SELECT 
+	      COUNT(*) as count_value,
+	      WHERE analysis_id = 1
+	  ),
+	  ageT
+	  
+	  "
+	  
+	  
+	}
+	  
+	  # Get the specifications ------------------
 
 		# Loop through the databases -----------------------------------------------
-
+	  dbNum <- nrow(dbNames)
+	
 		for(i in 1:dbNum){
 
 			dbName <- dbNames[i,2]
