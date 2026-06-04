@@ -398,24 +398,6 @@ executeDbDiagnostics <- function(connectionDetails,
         requiredOutcomeConcepts <- NULL
       }
 
-      # Potently need to query for numPersonsInDb
-
-      sql <- "
-        SELECT count_value
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 1
-          AND release_key = '@databaseName'
-      "
-
-      numPersonsInDb <- DatabaseConnector::renderTranslateQuerySql(
-        connection = conn,
-        sql = sql,
-        dbms = connectionDetails$dbms,
-        results_database_schema = resultsDatabaseSchema,
-        results_table_name = resultsTableName,
-        databaseName = dbName
-      )$COUNT_VALUE[1]
-
       sql <- "
   	  -- Age
       SELECT
@@ -457,7 +439,7 @@ executeDbDiagnostics <- function(connectionDetails,
       SELECT
         count_value,
         'propWithRaceCriteria' AS statistic,
-        '@raceConceptIds' as spec
+        '@raceConceptIds' as spec,
         1 AS evaluate_threshold
         FROM @results_database_schema.@results_table_name
       WHERE analysis_id = 4
@@ -469,7 +451,7 @@ executeDbDiagnostics <- function(connectionDetails,
         SELECT
           count_value,
           'propWithEthnicityCriteria' AS statistic,
-          '@ethnicityConceptIds' as spec
+          '@ethnicityConceptIds' as spec,
           1 AS evaluate_threshold
           FROM @results_database_schema.@results_table_name
         WHERE analysis_id = 5
@@ -725,13 +707,13 @@ executeDbDiagnostics <- function(connectionDetails,
           UNION ALL
             {@requiredOutcomeConcepts == ''} ? {
               SELECT
-                CAST(NULL AS FLOAT) AS count_value,
+                -1 AS count_value,
                 'propWithRequiredOutcomeConcepts' AS statistic,
                 CAST(NULL AS VARCHAR(255)) AS spec,
                 0 AS evaluate_threshold
             } : {
               SELECT
-                COALESCE(MAX(count_value), 0) AS count_value,
+                -1 AS count_value,
                 'propWithRequiredOutcomeConcepts' AS statistic,
                 '@outcome' AS spec,
                 2 AS evaluate_threshold
@@ -739,8 +721,9 @@ executeDbDiagnostics <- function(connectionDetails,
               WHERE analysis_id IN (1800, 400, 600, 700, 800, 2100)
                 AND release_key = '@databaseName'
                 AND stratum_1 IN (@requiredOutcomeConcepts)
-            }
+          }
       "
+
       rsql <- SqlRender::render(
         sql = sql,
         results_database_schema = resultsDatabaseSchema,
@@ -772,19 +755,300 @@ executeDbDiagnostics <- function(connectionDetails,
         desiredER = desiredER,
         target = target,
         requiredTargetConcepts = requiredTargetConcepts,
-        comparator = comparatorName,
+        comparator = comparator,
         requiredComparatorConcepts = requiredComparatorConcepts,
-        indication = indicationName,
+        indication = indication,
         requiredIndicationConcepts = requiredIndicationConcepts,
-        outcome = outcomeName,
+        outcome = outcome,
         requiredOutcomeConcepts = requiredOutcomeConcepts
       )
 
-      tsql <- SqlRender::translate(rsql, targetDialect = connectionDetails$dbms)
+      tsql <- SqlRender::translate(rsql, connectionDetails$dbms)
 
-      personOutput <- DatabaseConnector::querySql(conn, tsql)
+      personOutput <- DatabaseConnector::querySql(conn, tsql, snakeCaseToCamelCase = TRUE)
+
+      # Calendar Time ----------
+
+      sql <- "
+      SELECT
+        'numPersonsInDb' AS stat_name,
+        COALESCE(MAX(count_value), 0) AS counts
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id = 1
+        AND release_key = '@databaseName'
+
+      UNION ALL
+
+      SELECT
+        'totalObsPeriods' AS stat_name,
+        COALESCE(SUM(count_value), 0) AS counts
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id = 111
+        AND release_key = '@databaseName'
+
+      UNION ALL
+
+      SELECT
+        'obs_starts' AS stat_name,
+        COALESCE(SUM(count_value), 0) AS counts
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id = 111
+        AND release_key = '@databaseName'
+        AND stratum_1 <= '@studyEndDate'
+
+      UNION ALL
+
+      SELECT
+        'obs_ends' AS stat_name,
+        COALESCE(SUM(count_value), 0) AS counts
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id = 112
+        AND release_key = '@databaseName'
+        AND stratum_1 >= '@studyStartDate'
+    "
+
+      calendarStats <- DatabaseConnector::renderTranslateQuerySql(
+        connection = conn,
+        sql = sql,
+        snakeCaseToCamelCase = TRUE,
+        dbms = connectionDetails$dbms,
+        results_database_schema = resultsDatabaseSchema,
+        results_table_name = resultsTableName,
+        databaseName = dbName,
+        studyStartDate = studyStartDate,
+        studyEndDate = studyEndDate
+      )
+
+
+      numPersonsInDb <- calendarStats$counts[calendarStats$statName == "numPersonsInDb"]
+
+      totalObsPeriods <- calendarStats$counts[calendarStats$statName == "totalObsPeriods"]
+
+      avgObsPeriodsPerPerson <- totalObsPeriods / numPersonsInDb
+
+      obsStartsCount <- calendarStats$counts[calendarStats$statName == "obs_starts"]
+
+      personsWithCalendarStarts <- obsStartsCount / avgObsPeriodsPerPerson
+
+      propWithCalendarStarts <- personsWithCalendarStarts / numPersonsInDb
+
+      obsEndsCount <- calendarStats$counts[calendarStats$statName == "obs_ends"]
+
+      personsWithCalendarEnds <- obsEndsCount / avgObsPeriodsPerPerson
+
+      propWithCalendarEnds <- personsWithCalendarEnds / numPersonsInDb
+
+      calendarTime <- (1 - ((1 - propWithCalendarEnds) + (1 - propWithCalendarStarts)))
+
+      numPersonsWithCalendarTime <- calendarTime * numPersonsInDb
+
+      personsWithCalendarTime <- as.data.frame(cbind(
+        "propWithCalendarTime",
+        numPersonsWithCalendarTime,
+        calendarTime
+      )) %>%
+        rename(
+          "statistic" = "V1",
+          "value" = "numPersonsWithCalendarTime",
+          "proportion" = "calendarTime"
+        ) %>%
+        mutate(
+          spec = paste(studyStartDate, studyEndDate, sep = "-"),
+          evaluateThreshold = 1
+        )
+
+      # Data Domain Coverage - Measurements w/Values
+
+      sql <- "
+        SELECT
+          COALESCE(SUM(CASE WHEN analysis_id = 1801 THEN count_value END), 0) AS num_meas_records,
+          COALESCE(MAX(CASE WHEN analysis_id = 1814 THEN count_value END), 0) AS num_meas_records_with_values
+        FROM @results_database_schema.@results_table_name
+        WHERE analysis_id IN (1801, 1814)
+          AND release_key = '@databaseName'
+      "
+
+      numMeasurementsTable <- DatabaseConnector::renderTranslateQuerySql(
+        connection = conn,
+        sql = sql,
+        snakeCaseToCamelCase = TRUE,
+        dbms = connectionDetails$dbms,
+        results_database_schema = resultsDatabaseSchema,
+        results_table_name = resultsTableName,
+        databaseName = dbName
+      )
+
+
+      numMeasRecords <- numMeasurementsTable$numMeasRecords[1]
+      numMeasRecordsWithValues <- numMeasurementsTable$numMeasRecordsWithValues[1]
+
+      if (numMeasRecordsWithValues == 0 || numMeasRecords == 0) {
+        propMeasRecordsWithValues <- 0
+      } else {
+        propMeasRecordsWithValues <- numMeasRecordsWithValues / numMeasRecords
+      }
+
+      measRecordsWithValues <- as.data.frame(cbind("propMeasRecordsWithValues", numMeasRecordsWithValues, propMeasRecordsWithValues)) %>%
+        rename(
+          "statistic" = "V1",
+          "value" = "numMeasRecordsWithValues",
+          "proportion" = "propMeasRecordsWithValues"
+        ) %>%
+        mutate(
+          spec = case_when(
+            desiredObservation == 1 ~ "Measurements with values desired",
+            desiredObservation == 0 ~ "Measurements with values not desired"
+          ),
+          evaluateThreshold = desiredMeasurementValues
+        )
+
+      finalOutput <- rbind(personsWithCalendarTime, measRecordsWithValues)
+
+      # Evaluate diagnostics for recommended Dbs per study question -----------
+
+      personOutputSum <- personOutput %>%
+        group_by(statistic, spec, evaluateThreshold) %>%
+        summarise(value = sum(countValue)) %>%
+        mutate(proportion = value / numPersonsInDb)
+
+      personOutputSum <- rbind(finalOutput, personOutputSum)
+
+      personOutputSum <- personOutputSum %>%
+        left_join(ddThresholds,
+          by = c("statistic" = "statistic")
+        )
+
+      # Evaluate results against thresholds
+
+      sampleSizeValues <- personOutputSum %>%
+        filter(evaluateThreshold == 1) %>%
+        select("proportion")
+
+      if (requiredIP == 1) {
+        ipProp <- personOutputSum %>%
+          filter(statistic == "propWithIPCriteria") %>%
+          select("proportion")
+
+        sampleSizeValues <- rbind(sampleSizeValues, ipProp)
+      }
+
+      if (requiredER == 1) {
+        erProp <- personOutputSum %>%
+          filter(statistic == "propWithERCriteria") %>%
+          select("proportion")
+
+        sampleSizeValues <- rbind(sampleSizeValues, erProp)
+      }
+
+      if (requiredOP == 1) {
+        opProp <- personOutputSum %>%
+          filter(statistic == "propWithOPCriteria") %>%
+          select("proportion")
+
+        sampleSizeValues <- rbind(sampleSizeValues, opProp)
+      }
+
+      dataDiagnosticsOutput <- personOutputSum %>%
+        mutate(
+          status = case_when(
+            proportion <= threshold ~ "fail",
+            proportion > threshold ~ "pass"
+          ),
+          fail = case_when(
+            proportion <= threshold ~ 1,
+            proportion > threshold ~ 0
+          )
+        )
+
+      if (studySpecs$includeIndicationInCalc) {
+        minSampleSizeProp <- min(as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredTargetConcepts"), ]$proportion),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredComparatorConcepts"), ]$proportion),
+          na.rm = TRUE
+        ) * prod(as.numeric(sampleSizeValues[, 1])) * as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredIndicationConcepts"), ]$proportion)
+      } else {
+        minSampleSizeProp <- min(as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredTargetConcepts"), ]$proportion),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredComparatorConcepts"), ]$proportion),
+          na.rm = TRUE
+        ) * prod(as.numeric(sampleSizeValues[, 1]))
+      }
+
+      minSampleSize <- round(minSampleSizeProp * numPersonsInDb, digits = 0)
+
+      minSample <- list(
+        statistic = "minSampleSize",
+        value = minSampleSize,
+        proportion = minSampleSizeProp,
+        spec = "> 1000",
+        evaluateThreshold = 1,
+        threshold = 0,
+        status = "pass",
+        fail = 0
+      )
+
+      if (studySpecs$includeIndicationInCalc) {
+        maxSampleSizeProp <- min(as.numeric(sampleSizeValues[, 1]),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredTargetConcepts"), ]$proportion),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredComparatorConcepts"), ]$proportion),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredIndicationConcepts"), ]$proportion),
+          na.rm = TRUE
+        )
+      } else {
+        maxSampleSizeProp <- min(as.numeric(sampleSizeValues[, 1]),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredTargetConcepts"), ]$proportion),
+          as.numeric(personOutputSum[which(personOutputSum$statistic == "propWithRequiredComparatorConcepts"), ]$proportion),
+          na.rm = TRUE
+        )
+      }
+
+      maxSampleSize <- maxSampleSizeProp * numPersonsInDb
+
+      if (maxSampleSize < 1000) {
+        maxSampleStatus <- "fail"
+        maxSampleFail <- 1
+      } else {
+        maxSampleStatus <- "pass"
+        maxSampleFail <- 0
+      }
+
+      maxSample <- list(
+        statistic = "maxSampleSize",
+        value = maxSampleSize,
+        proportion = maxSampleSizeProp,
+        spec = "> 1000",
+        evaluateThreshold = 1,
+        threshold = 1000,
+        status = maxSampleStatus,
+        fail = maxSampleFail
+      )
+
+      dataDiagnosticsOutput <- rbind(dataDiagnosticsOutput, minSample, maxSample)
+
+      dataDiagnosticsOutput <- dataDiagnosticsOutput %>%
+        filter(evaluateThreshold > 0) %>%
+        mutate(
+          analysisId = analysisId,
+          analysisName = analysisName,
+          databaseId = dbName, .before = statistic
+        )
+
+      if (k == 1) {
+        dataDiagnosticsResults <- dataDiagnosticsOutput
+      } else {
+        dataDiagnosticsResultsNew <- rbind(dataDiagnosticsResults, dataDiagnosticsOutput)
+        dataDiagnosticsResults <- dataDiagnosticsResultsNew
+      }
+    } # end of for loop around analysis list
+    CohortGenerator::writeCsv(dataDiagnosticsResults, file.path(outputFolder, "data_diagnostics_output.csv"), append = (i != 1))
+
+    if (i == 1) {
+      totalResults <- dataDiagnosticsResults
+    } else {
+      totalResultsNew <- rbind(dataDiagnosticsResults, totalResults)
+      totalResults <- totalResultsNew
     }
-  }
+  } # end of for loop around database list
+
+
   # Get the specifications ------------------
 
   # Loop through the databases -----------------------------------------------
