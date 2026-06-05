@@ -93,6 +93,7 @@ executeDbDiagnostics <- function(connectionDetails,
 
 			tsql <- SqlRender::translate(rsql, connectionDetails$dbms)
 			dbProfile <- DatabaseConnector::querySql(conn, tsql)
+			names(dbProfile) <- toupper(names(dbProfile))
 
 			# Set up the specs for this study/db combination. This is done after getting the dbProfile information because NULL
 			# values in the specs get values from the database in order to evaluate them
