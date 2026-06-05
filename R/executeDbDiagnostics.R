@@ -112,7 +112,8 @@ executeDbDiagnostics <- function(connectionDetails,
 
     message(paste0("Database: ", dbName, " (", i, "/", nrow(dbNames), ")"))
 
-    dbProfile <- conceptIdsTable %>% filter(RELEASE_KEY == dbName)
+    dbProfile <- conceptIdsTable %>% filter(release_key == dbName)
+    names(dbProfile) <- toupper(names(dbProfile))
 
     for (k in 1:length(dataDiagnosticsSettingsList)) {
       studySpecs <- dataDiagnosticsSettingsList[[k]]
