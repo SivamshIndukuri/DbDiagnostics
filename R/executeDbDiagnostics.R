@@ -18,102 +18,70 @@
 
 #' executeDbDiagnostics
 #'
-#' @param connectionDetails         	  A connectionDetails object for connecting to the database containing the DbProfile results
-#' @param resultsDatabaseSchema     	  The fully qualified database name of the results schema where the DbProfile results are housed. Default is "dp_temp".
-#' @param resultsTableName						  The name of the table in the results schema with the DbProfile results. Default is "dp_achilles_results_augmented."
-#' @param outputFolder              	  Results will be written to this directory, default = getwd()
-#' @param dataDiagnosticsSettingsList		A list of settings objects, each created from DataDiagnostics::createDataDiagnosticsSettings() function and each representing one analysis.
+#' @param connectionDetails             A connectionDetails object for connecting to the database containing the DbProfile results
+#' @param resultsDatabaseSchema         The fully qualified database name of the results schema where the DbProfile results are housed. Default is "dp_temp".
+#' @param resultsTableName              The name of the table in the results schema with the DbProfile results. Default is "dp_achilles_results_augmented."
+#' @param outputFolder                  Results will be written to this directory, default = getwd()
+#' @param dataDiagnosticsSettingsList   A list of settings objects, each created from DataDiagnostics::createDataDiagnosticsSettings() function and each representing one analysis.
 #'
 #' @import DataQualityDashboard Achilles DatabaseConnector SqlRender dplyr magrittr
 #' @importFrom ParallelLogger saveSettingsToJson
 #'
 #' @export
-
 executeDbDiagnostics <- function(connectionDetails,
                                  resultsDatabaseSchema,
                                  resultsTableName,
                                  outputFolder = getwd(),
                                  dataDiagnosticsSettingsList) {
   # Set up outputFolder
-
   if (!dir.exists(outputFolder)) {
     dir.create(path = outputFolder, recursive = TRUE)
   }
 
   # Connect to the results schema to get list of databases included in results table ---------------
   options(scipen = 999)
-
   conn <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(conn))
 
   # TODO check the name of the column in the results schema -----------
   sql <- "SELECT DISTINCT CDM_SOURCE_NAME, RELEASE_KEY
-        FROM @results_database_schema.@results_table_name"
-
+      FROM @results_database_schema.@results_table_name"
   rsql <- SqlRender::render(
     sql = sql,
     results_database_schema = resultsDatabaseSchema,
     results_table_name = resultsTableName
   )
   tsql <- SqlRender::translate(rsql, connectionDetails$dbms)
-
   dbNames <- DatabaseConnector::querySql(conn, tsql)
-
-  # Get the most recent release for each database -------------------------------
-  # message("Get most recent database release")
-  # for(i in 1:nrow(dbNames)){
-  # 	dbInfo <- strsplit(dbNames$DB_ID[i], split = "-")
-  #
-  # 	dbNames$DB_ABBREV[i] <- dbInfo[[1]][[1]]
-  # 	dbNames$DB_DATE[i] <- dbInfo[[1]][[2]]
-  #
-  # 	rm(dbInfo)
-  # }
-  # rm(i)
-  #
-  # latestDbs<- dbNames %>%
-  # 	group_by(DB_ABBREV) %>%
-  # 	slice_max(DB_DATE, n=1)
-
 
   # refactoring portion ------------------------------------------------------
   # concept Ids
   sql <- "SELECT analysis_id, stratum_1, release_key
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id IN (4, 5)
-
-        UNION ALL
-
-        SELECT analysis_id, MIN(stratum_1) AS stratum_1, release_key
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id IN (101, 111, 112)
-        GROUP BY analysis_id, release_key
-
-        UNION ALL
-
-        SELECT analysis_id, MAX(stratum_1) AS stratum_1, release_key
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id IN (101, 111, 112)
-        GROUP BY analysis_id, release_key"
-
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id IN (4, 5)
+      UNION ALL
+      SELECT analysis_id, MIN(stratum_1) AS stratum_1, release_key
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id IN (101, 111, 112)
+      GROUP BY analysis_id, release_key
+      UNION ALL
+      SELECT analysis_id, MAX(stratum_1) AS stratum_1, release_key
+      FROM @results_database_schema.@results_table_name
+      WHERE analysis_id IN (101, 111, 112)
+      GROUP BY analysis_id, release_key"
   rsql <- SqlRender::render(sql,
     results_database_schema = resultsDatabaseSchema,
     results_table_name = resultsTableName
   )
-
   tsql <- SqlRender::translate(rsql, targetDialect = connectionDetails$dbms)
-
-  conceptIdsTable <- DatabaseConnector::querySql(conn, tsql)
+  conceptIdsTable <- DatabaseConnector::querySql(conn, tsql, snakeCaseToCamelCase = TRUE)
 
   dbNum <- nrow(dbNames)
 
   for (i in 1:dbNum) {
     dbName <- dbNames[i, 2]
-
     message(paste0("Database: ", dbName, " (", i, "/", nrow(dbNames), ")"))
-
-    dbProfile <- conceptIdsTable %>% filter(release_key == dbName)
-    names(dbProfile) <- toupper(names(dbProfile))
+    dbProfile <- conceptIdsTable %>% filter(releaseKey == dbName)
 
     for (k in 1:length(dataDiagnosticsSettingsList)) {
       studySpecs <- dataDiagnosticsSettingsList[[k]]
@@ -124,8 +92,7 @@ executeDbDiagnostics <- function(connectionDetails,
       if (is.null(studySpecs$targetConceptIds)) {
         stop("Need to specify targetConceptIds")
       }
-
-      checkmate::assertInteger(studySpecs$analysisId, null.ok = FALSE, len = 1)
+      checkmate::assertIntegerish(studySpecs$analysisId, null.ok = FALSE, len = 1)
       checkmate::assertString(studySpecs$analysisName, null.ok = FALSE, min.chars = 1)
       checkmate::assertNumeric(studySpecs$minAge, null.ok = TRUE)
       checkmate::assertNumeric(studySpecs$maxAge, null.ok = TRUE)
@@ -134,12 +101,10 @@ executeDbDiagnostics <- function(connectionDetails,
       checkmate::assertIntegerish(studySpecs$ethnicityConceptIds, null.ok = TRUE)
       checkmate::assertString(studySpecs$studyStartDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
       checkmate::assertString(studySpecs$studyEndDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
-      checkmate::assertInteger(studySpecs$requiredDurationDays, null.ok = FALSE)
-
+      checkmate::assertIntegerish(studySpecs$requiredDurationDays, null.ok = FALSE)
       allowed_visits <- c("IP", "OP", "ER")
       checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
       checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
-
       checkmate::assertString(studySpecs$targetName, null.ok = FALSE)
       checkmate::assertIntegerish(studySpecs$targetConceptIds, null.ok = FALSE, min.len = 1)
       checkmate::assertString(studySpecs$comparatorName, null.ok = TRUE)
@@ -158,29 +123,26 @@ executeDbDiagnostics <- function(connectionDetails,
 
       # Name of this individual study
       analysisName <- studySpecs$analysisName
-
       message(paste0("   -- Analysis #", analysisId, " - ", analysisName, " (", k, "/", length(dataDiagnosticsSettingsList), ")"))
 
       numCriteria <- 0
 
       # Age
       if (is.null(studySpecs$minAge)) {
-        minAge <- min(as.integer(dbProfile[which(dbProfile$ANALYSIS_ID == 101), ]$STRATUM_1))
+        minAge <- min(as.integer(dbProfile[which(dbProfile$analysisId == 101), ]$stratum1))
       } else {
         minAge <- studySpecs$minAge
         numCriteria <- numCriteria + 1
       }
-
       if (is.null(studySpecs$maxAge)) {
-        maxAge <- max(as.integer(dbProfile[which(dbProfile$ANALYSIS_ID == 101), ]$STRATUM_1))
+        maxAge <- max(as.integer(dbProfile[which(dbProfile$analysisId == 101), ]$stratum1))
       } else {
         maxAge <- studySpecs$maxAge
         numCriteria <- numCriteria + 1
       }
 
-      maxYearInDb <- as.integer(substr(max(dbProfile[which(dbProfile$ANALYSIS_ID == 111), ]$STRATUM_1), 1, 4))
-      minYearInDb <- as.integer(substr(min(dbProfile[which(dbProfile$ANALYSIS_ID == 111), ]$STRATUM_1), 1, 4))
-
+      maxYearInDb <- as.integer(substr(max(dbProfile[which(dbProfile$analysisId == 111), ]$stratum1), 1, 4))
+      minYearInDb <- as.integer(substr(min(dbProfile[which(dbProfile$analysisId == 111), ]$stratum1), 1, 4))
       minBirthYearNeeded <- minYearInDb - maxAge
       maxBirthYearNeeded <- maxYearInDb - minAge
 
@@ -201,9 +163,9 @@ executeDbDiagnostics <- function(connectionDetails,
       # Race
       if (is.null(studySpecs$raceConceptIds)) {
         raceConceptIds <- dbProfile %>%
-          filter(ANALYSIS_ID == 4) %>%
-          select(STRATUM_1) %>%
-          .[["STRATUM_1"]]
+          filter(analysisId == 4) %>%
+          select(stratum1) %>%
+          .[["stratum1"]]
       } else {
         raceConceptIds <- studySpecs$raceConceptIds
         numCriteria <- numCriteria + 1
@@ -212,9 +174,9 @@ executeDbDiagnostics <- function(connectionDetails,
       # Ethnicity
       if (is.null(studySpecs$ethnicityConceptIds)) {
         ethnicityConceptIds <- dbProfile %>%
-          filter(ANALYSIS_ID == 5) %>%
-          select(STRATUM_1) %>%
-          .[["STRATUM_1"]]
+          filter(analysisId == 5) %>%
+          select(stratum1) %>%
+          .[["stratum1"]]
       } else {
         ethnicityConceptIds <- studySpecs$ethnicityConceptIds
         numCriteria <- numCriteria + 1
@@ -222,17 +184,17 @@ executeDbDiagnostics <- function(connectionDetails,
 
       # Study Start Date
       if (is.null(studySpecs$studyStartDate)) {
-        studyStartDate <- min(dbProfile[which(dbProfile$ANALYSIS_ID == 111), ]$STRATUM_1)
+        studyStartDate <- min(dbProfile[which(dbProfile$analysisId == 111), ]$stratum1)
       } else {
-        studyStartDate <- max(as.numeric(studySpecs$studyStartDate), min(dbProfile[which(dbProfile$ANALYSIS_ID == 111), ]$STRATUM_1))
+        studyStartDate <- max(as.numeric(studySpecs$studyStartDate), min(dbProfile[which(dbProfile$analysisId == 111), ]$stratum1))
         numCriteria <- numCriteria + 1
       }
 
       # Study End Date
       if (is.null(studySpecs$studyEndDate)) {
-        studyEndDate <- max(dbProfile[which(dbProfile$ANALYSIS_ID == 112), ]$STRATUM_1)
+        studyEndDate <- max(dbProfile[which(dbProfile$analysisId == 112), ]$stratum1)
       } else {
-        studyEndDate <- min(as.numeric(studySpecs$studyEndDate), max(dbProfile[which(dbProfile$ANALYSIS_ID == 111), ]$STRATUM_1))
+        studyEndDate <- min(as.numeric(studySpecs$studyEndDate), max(dbProfile[which(dbProfile$analysisId == 111), ]$stratum1))
         numCriteria <- numCriteria + 1
       }
 
@@ -243,7 +205,6 @@ executeDbDiagnostics <- function(connectionDetails,
       # Required domains
       requiredDomains <- studySpecs$requiredDomains
       numCriteria <- numCriteria + 1
-
       if ("condition" %in% requiredDomains) {
         requiredCondition <- 1
       } else {
@@ -274,12 +235,10 @@ executeDbDiagnostics <- function(connectionDetails,
       } else {
         requiredObservation <- 0
       }
-
       bitString <- paste0(requiredCondition, requiredDrug, requiredDevice, requiredMeasurement, 0, requiredProcedure, requiredObservation)
 
       # Desired domains
       desiredDomains <- studySpecs$desiredDomains
-
       if ("condition" %in% desiredDomains) {
         desiredCondition <- 1
         numCriteria <- numCriteria + 1
@@ -331,7 +290,6 @@ executeDbDiagnostics <- function(connectionDetails,
 
       # Required visits
       requiredVisits <- studySpecs$requiredVisits
-
       if ("IP" %in% requiredVisits) {
         requiredIP <- 1
       } else {
@@ -350,7 +308,6 @@ executeDbDiagnostics <- function(connectionDetails,
 
       # Desired visits
       desiredVisits <- studySpecs$desiredVisits
-
       if ("IP" %in% desiredVisits) {
         desiredIP <- 1
         numCriteria <- numCriteria + 1
@@ -405,334 +362,10 @@ executeDbDiagnostics <- function(connectionDetails,
         requiredOutcomeConcepts <- ""
       }
 
-      sql <- "
-  	  -- Age
-      SELECT
-        count_value,
-        'propInAgeRange' AS statistic,
-        '@age_spec' AS spec,
-        1 AS evaluate_threshold
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 3
-        AND release_key = '@databaseName'
-        AND CAST(stratum_1 AS INT) BETWEEN @min_birth_year_needed AND @max_birth_year_needed
-
-      UNION ALL
-
-      SELECT
-        count_value,
-        'propWithAgeAtFirstObs' AS statistic,
-        '@age_spec' AS spec,
-        1 AS evaluate_threshold
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 101
-        AND release_key = '@databaseName'
-        AND CAST(stratum_1 AS INT) BETWEEN @min_age AND @max_age
-
-      UNION ALL
-      -- Gender
-      SELECT
-        count_value,
-        'propWithGenderCriteria' AS statistic,
-        '@genderConceptIds' AS spec,
-        1 AS evaluate_threshold
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 2
-        AND release_key = '@databaseName'
-        AND stratum_1 IN (@genderConceptIds)
-
-      UNION ALL
-      -- Race
-      SELECT
-        count_value,
-        'propWithRaceCriteria' AS statistic,
-        '@raceConceptIds' as spec,
-        1 AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 4
-        AND release_key = '@databaseName'
-        AND stratum_1 IN (@raceConceptIds)
-
-      UNION ALL
-        -- Ethinicty
-        SELECT
-          count_value,
-          'propWithEthnicityCriteria' AS statistic,
-          '@ethnicityConceptIds' as spec,
-          1 AS evaluate_threshold
-          FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 5
-          AND release_key = '@databaseName'
-          AND stratum_1 IN (@ethnicityConceptIds)
-
-      UNION ALL
-        -- Longitudinality
-        SELECT
-          count_value,
-          'propWithLongitudinalCriteria' AS statistic,
-          '@requiredDurationDays days' AS spec,
-          1 AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 108
-          AND release_key = '@databaseName'
-          AND stratum_1 >= ROUND(@requiredDurationDays / 30.0, 0)
-
-      UNION ALL
-        -- Data Domain Coverage
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithRequiredDomain' AS statistic,
-          '@requiredDomains' AS spec,
-          1 AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '@bitString'
-
-      UNION ALL
-        -- Conditions
-        SELECT
-        COALESCE(MAX(COUNT_VALUE), 0) AS count_value,
-        'propWithConditionCriteria' AS statistic,
-        CASE
-          WHEN @desiredCondition = 1 THEN 'Conditions desired'
-          WHEN @desiredCondition = 0 THEN 'Conditions not desired'
-        END AS spec,
-        @desiredCondition AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '1000000'
-
-      UNION ALL
-        -- Drugs
-        SELECT
-        COALESCE(MAX(COUNT_VALUE), 0) AS count_value,
-        'propWithDrugCriteria' AS statistic,
-        CASE
-          WHEN @desiredDrug = 1 THEN 'Drugs desired'
-          WHEN @desiredDrug = 0 THEN 'Drugs not desired'
-        END AS spec,
-        @desiredDrug AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0100000'
-
-      UNION ALL
-        -- Device
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithDeviceCriteria' AS statistic,
-          CASE
-            WHEN @desiredDevice = 1 THEN 'Devices desired'
-            WHEN @desiredDevice = 0 THEN 'Devices not desired'
-          END AS spec,
-          @desiredDevice AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0010000'
-
-      UNION ALL
-        -- Measurement
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithMeasurementCriteria' AS statistic,
-          CASE
-            WHEN @desiredMeasurement = 1 THEN 'Measurements desired'
-            WHEN @desiredMeasurement = 0 THEN 'Measurements not desired'
-          END AS spec,
-          @desiredMeasurement AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0001000'
-
-      UNION ALL
-        -- Death
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithDeathCriteria' AS statistic,
-          CASE
-            WHEN @desiredDeath = 1 THEN 'Death domain desired'
-            WHEN @desiredDeath = 0 THEN 'Death domain not desired'
-          END AS spec,
-          @desiredDeath AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0000100'
-
-      UNION ALL
-        -- Procedure
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithProcedureCriteria' AS statistic,
-          CASE
-            WHEN @desiredProcedure = 1 THEN 'Procedures desired'
-            WHEN @desiredProcedure = 0 THEN 'Procedures not desired'
-          END AS spec,
-          @desiredProcedure AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0000010'
-
-      UNION ALL
-        -- Observation
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithObservationCriteria' AS statistic,
-          CASE
-            WHEN @desiredObservation = 1 THEN 'Observations desired'
-            WHEN @desiredObservation = 0 THEN 'Observations not desired'
-          END AS spec,
-          @desiredObservation AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 2004
-          AND release_key = '@databaseName'
-          AND stratum_1 = '0000001'
-
-      UNION ALL
-        -- Inpatient Visit Criteria
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithIPCriteria' AS statistic,
-          CASE
-            WHEN @requiredIP = 1 AND @desiredIP = 1 THEN 'Inpatient visits required and desired'
-            WHEN @requiredIP = 1 AND @desiredIP = 0 THEN 'Inpatient visits required'
-            WHEN @requiredIP = 0 AND @desiredIP = 1 THEN 'Inpatient visits desired'
-            WHEN @requiredIP = 0 AND @desiredIP = 0 THEN 'Inpatient visits not required nor desired'
-          END AS spec,
-          CASE
-            WHEN @requiredIP = 1 AND @desiredIP = 1 THEN 1
-            WHEN @requiredIP = 1 AND @desiredIP = 0 THEN 1
-            WHEN @requiredIP = 0 AND @desiredIP = 1 THEN 3
-            WHEN @requiredIP = 0 AND @desiredIP = 0 THEN 0
-          END AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 200
-          AND release_key = '@databaseName'
-          AND visit_ancestor_concept_id IN (9201, 262)
-
-      UNION ALL
-        -- Outpatient Visit Criteria
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithOPCriteria' AS statistic,
-          CASE
-            WHEN @requiredOP = 1 AND @desiredOP = 1 THEN 'Outpatient visits required and desired'
-            WHEN @requiredOP = 1 AND @desiredOP = 0 THEN 'Outpatient visits required'
-            WHEN @requiredOP = 0 AND @desiredOP = 1 THEN 'Outpatient visits desired'
-            WHEN @requiredOP = 0 AND @desiredOP = 0 THEN 'Outpatient visits not required nor desired'
-          END AS spec,
-          CASE
-            WHEN @requiredOP = 1 AND @desiredOP = 1 THEN 1
-            WHEN @requiredOP = 1 AND @desiredOP = 0 THEN 1
-            WHEN @requiredOP = 0 AND @desiredOP = 1 THEN 3
-            WHEN @requiredOP = 0 AND @desiredOP = 0 THEN 0
-          END AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 200
-          AND release_key = '@databaseName'
-          AND visit_ancestor_concept_id IN (9202, 5083)
-
-      UNION ALL
-        -- Emergency Room Visit Criteria
-        SELECT
-          COALESCE(MAX(count_value), 0) AS count_value,
-          'propWithERCriteria' AS statistic,
-          CASE
-            WHEN @requiredER = 1 AND @desiredER = 1 THEN 'Emergency Room visits required and desired'
-            WHEN @requiredER = 1 AND @desiredER = 0 THEN 'Emergency Room visits required'
-            WHEN @requiredER = 0 AND @desiredER = 1 THEN 'Emergency Room visits desired'
-            WHEN @requiredER = 0 AND @desiredER = 0 THEN 'Emergency Room visits not required nor desired'
-          END AS spec,
-          CASE
-            WHEN @requiredER = 1 AND @desiredER = 1 THEN 1
-            WHEN @requiredER = 1 AND @desiredER = 0 THEN 1
-            WHEN @requiredER = 0 AND @desiredER = 1 THEN 3
-            WHEN @requiredER = 0 AND @desiredER = 0 THEN 0
-          END AS evaluate_threshold
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id = 200
-          AND release_key = '@databaseName'
-          AND visit_ancestor_concept_id IN (9203, 262)
-
-        UNION ALL
-          -- Required Concepts
-          SELECT
-            COALESCE(MAX(count_value), 0) AS count_value,
-            'propWithRequiredTargetConcepts' AS statistic,
-            '@target' AS spec,
-            2 AS evaluate_threshold
-          FROM @results_database_schema.@results_table_name
-          WHERE analysis_id IN (1800, 400, 600, 700, 800, 2100)
-            AND release_key = '@databaseName'
-            AND stratum_1 IN (@requiredTargetConcepts)
-
-
-        UNION ALL
-          {@requiredComparatorConcepts == ''} ? {
-            SELECT
-              -1 AS count_value,
-              'propWithRequiredComparatorConcepts' AS statistic,
-              'NA' AS spec,
-              0 AS evaluate_threshold
-          } : {
-            SELECT
-              COALESCE(MAX(count_value), 0) AS count_value,
-              'propWithRequiredComparatorConcepts' AS statistic,
-              '@comparator' AS spec,
-              2 AS evaluate_threshold
-            FROM @results_database_schema.@results_table_name
-            WHERE analysis_id IN (1800, 400, 600, 700, 800, 2100)
-              AND release_key = '@databaseName'
-              AND stratum_1 IN (@requiredComparatorConcepts)
-          }
-
-        UNION ALL
-          {@requiredIndicationConcepts == ''} ? {
-          SELECT
-            -1 AS count_value,
-            'propWithRequiredIndicationConcepts' AS statistic,
-            'NA' AS spec,
-            0 AS evaluate_threshold
-          } : {
-            SELECT
-              COALESCE(MAX(count_value), 0) AS count_value,
-              'propWithRequiredIndicationConcepts' AS statistic,
-              '@indication' AS spec,
-              2 AS evaluate_threshold
-            FROM @results_database_schema.@results_table_name
-            WHERE analysis_id IN (1800, 400, 600, 700, 800, 2100)
-              AND release_key = '@databaseName'
-              AND stratum_1 IN (@requiredIndicationConcepts)
-          }
-
-          UNION ALL
-            {@requiredOutcomeConcepts == ''} ? {
-              SELECT
-                -1 AS count_value,
-                'propWithRequiredOutcomeConcepts' AS statistic,
-                'NA' AS spec,
-                0 AS evaluate_threshold
-            } : {
-              SELECT
-                -1 AS count_value,
-                'propWithRequiredOutcomeConcepts' AS statistic,
-                '@outcome' AS spec,
-                2 AS evaluate_threshold
-              FROM @results_database_schema.@results_table_name
-              WHERE analysis_id IN (1800, 400, 600, 700, 800, 2100)
-                AND release_key = '@databaseName'
-                AND stratum_1 IN (@requiredOutcomeConcepts)
-          }
-      "
-
-      rsql <- SqlRender::render(
-        sql = sql,
+      tsql <- SqlRender::loadRenderTranslateSql(
+        sqlFilename = "personOutput.sql",
+        packageName = "DbDiagnostics",
+        dbms = connectionDetails$dbms,
         results_database_schema = resultsDatabaseSchema,
         results_table_name = resultsTableName,
         databaseName = dbName,
@@ -769,87 +402,37 @@ executeDbDiagnostics <- function(connectionDetails,
         outcome = outcome,
         requiredOutcomeConcepts = requiredOutcomeConcepts
       )
-
-      tsql <- SqlRender::translate(rsql, connectionDetails$dbms)
-
       personOutput <- DatabaseConnector::querySql(conn, tsql, snakeCaseToCamelCase = TRUE)
 
       personOutput$countValue[personOutput$countValue == -1] <- NA
       personOutput$spec[personOutput$spec == "NA"] <- NA
 
       # Calendar Time ----------
-
-      sql <- "
-      SELECT
-        'numPersonsInDb' AS stat_name,
-        COALESCE(MAX(count_value), 0) AS counts
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 1
-        AND release_key = '@databaseName'
-
-      UNION ALL
-
-      SELECT
-        'totalObsPeriods' AS stat_name,
-        COALESCE(SUM(count_value), 0) AS counts
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 111
-        AND release_key = '@databaseName'
-
-      UNION ALL
-
-      SELECT
-        'obs_starts' AS stat_name,
-        COALESCE(SUM(count_value), 0) AS counts
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 111
-        AND release_key = '@databaseName'
-        AND stratum_1 <= '@studyEndDate'
-
-      UNION ALL
-
-      SELECT
-        'obs_ends' AS stat_name,
-        COALESCE(SUM(count_value), 0) AS counts
-      FROM @results_database_schema.@results_table_name
-      WHERE analysis_id = 112
-        AND release_key = '@databaseName'
-        AND stratum_1 >= '@studyStartDate'
-    "
-
       calendarStats <- DatabaseConnector::renderTranslateQuerySql(
         connection = conn,
-        sql = sql,
-        snakeCaseToCamelCase = TRUE,
-        dbms = connectionDetails$dbms,
-        results_database_schema = resultsDatabaseSchema,
-        results_table_name = resultsTableName,
-        databaseName = dbName,
-        studyStartDate = studyStartDate,
-        studyEndDate = studyEndDate
+        sql = SqlRender::loadRenderTranslateSql(
+          sqlFilename = "calendarStats.sql",
+          packageName = "DbDiagnostics",
+          dbms = connectionDetails$dbms,
+          results_database_schema = resultsDatabaseSchema,
+          results_table_name = resultsTableName,
+          databaseName = dbName,
+          studyStartDate = studyStartDate,
+          studyEndDate = studyEndDate
+        ),
+        snakeCaseToCamelCase = TRUE
       )
 
-
       numPersonsInDb <- calendarStats$counts[calendarStats$statName == "numPersonsInDb"]
-
       totalObsPeriods <- calendarStats$counts[calendarStats$statName == "totalObsPeriods"]
-
       avgObsPeriodsPerPerson <- totalObsPeriods / numPersonsInDb
-
       obsStartsCount <- calendarStats$counts[calendarStats$statName == "obs_starts"]
-
       personsWithCalendarStarts <- obsStartsCount / avgObsPeriodsPerPerson
-
       propWithCalendarStarts <- personsWithCalendarStarts / numPersonsInDb
-
       obsEndsCount <- calendarStats$counts[calendarStats$statName == "obs_ends"]
-
       personsWithCalendarEnds <- obsEndsCount / avgObsPeriodsPerPerson
-
       propWithCalendarEnds <- personsWithCalendarEnds / numPersonsInDb
-
       calendarTime <- (1 - ((1 - propWithCalendarEnds) + (1 - propWithCalendarStarts)))
-
       numPersonsWithCalendarTime <- calendarTime * numPersonsInDb
 
       personsWithCalendarTime <- as.data.frame(cbind(
@@ -868,36 +451,26 @@ executeDbDiagnostics <- function(connectionDetails,
         )
 
       # Data Domain Coverage - Measurements w/Values
-
-      sql <- "
-        SELECT
-          COALESCE(SUM(CASE WHEN analysis_id = 1801 THEN count_value END), 0) AS num_meas_records,
-          COALESCE(MAX(CASE WHEN analysis_id = 1814 THEN count_value END), 0) AS num_meas_records_with_values
-        FROM @results_database_schema.@results_table_name
-        WHERE analysis_id IN (1801, 1814)
-          AND release_key = '@databaseName'
-      "
-
       numMeasurementsTable <- DatabaseConnector::renderTranslateQuerySql(
         connection = conn,
-        sql = sql,
-        snakeCaseToCamelCase = TRUE,
-        dbms = connectionDetails$dbms,
-        results_database_schema = resultsDatabaseSchema,
-        results_table_name = resultsTableName,
-        databaseName = dbName
+        sql = SqlRender::loadRenderTranslateSql(
+          sqlFilename = "measurementStats.sql",
+          packageName = "DbDiagnostics",
+          dbms = connectionDetails$dbms,
+          results_database_schema = resultsDatabaseSchema,
+          results_table_name = resultsTableName,
+          databaseName = dbName
+        ),
+        snakeCaseToCamelCase = TRUE
       )
-
 
       numMeasRecords <- numMeasurementsTable$numMeasRecords[1]
       numMeasRecordsWithValues <- numMeasurementsTable$numMeasRecordsWithValues[1]
-
       if (numMeasRecordsWithValues == 0 || numMeasRecords == 0) {
         propMeasRecordsWithValues <- 0
       } else {
         propMeasRecordsWithValues <- numMeasRecordsWithValues / numMeasRecords
       }
-
       measRecordsWithValues <- as.data.frame(cbind("propMeasRecordsWithValues", numMeasRecordsWithValues, propMeasRecordsWithValues)) %>%
         rename(
           "statistic" = "V1",
@@ -906,8 +479,8 @@ executeDbDiagnostics <- function(connectionDetails,
         ) %>%
         mutate(
           spec = case_when(
-            desiredObservation == 1 ~ "Measurements with values desired",
-            desiredObservation == 0 ~ "Measurements with values not desired"
+            desiredMeasurementValues == 1 ~ "Measurements with values desired",
+            desiredMeasurementValues == 0 ~ "Measurements with values not desired"
           ),
           evaluateThreshold = desiredMeasurementValues
         )
@@ -915,7 +488,6 @@ executeDbDiagnostics <- function(connectionDetails,
       finalOutput <- rbind(personsWithCalendarTime, measRecordsWithValues)
 
       # Evaluate diagnostics for recommended Dbs per study question -----------
-
       personOutputSum <- personOutput %>%
         group_by(statistic, spec, evaluateThreshold) %>%
         summarise(value = sum(countValue)) %>%
@@ -929,7 +501,6 @@ executeDbDiagnostics <- function(connectionDetails,
         )
 
       # Evaluate results against thresholds
-
       sampleSizeValues <- personOutputSum %>%
         filter(evaluateThreshold == 1) %>%
         select("proportion")
@@ -938,23 +509,18 @@ executeDbDiagnostics <- function(connectionDetails,
         ipProp <- personOutputSum %>%
           filter(statistic == "propWithIPCriteria") %>%
           select("proportion")
-
         sampleSizeValues <- rbind(sampleSizeValues, ipProp)
       }
-
       if (requiredER == 1) {
         erProp <- personOutputSum %>%
           filter(statistic == "propWithERCriteria") %>%
           select("proportion")
-
         sampleSizeValues <- rbind(sampleSizeValues, erProp)
       }
-
       if (requiredOP == 1) {
         opProp <- personOutputSum %>%
           filter(statistic == "propWithOPCriteria") %>%
           select("proportion")
-
         sampleSizeValues <- rbind(sampleSizeValues, opProp)
       }
 
@@ -983,7 +549,6 @@ executeDbDiagnostics <- function(connectionDetails,
       }
 
       minSampleSize <- round(minSampleSizeProp * numPersonsInDb, digits = 0)
-
       minSample <- list(
         statistic = "minSampleSize",
         value = minSampleSize,
@@ -1011,7 +576,6 @@ executeDbDiagnostics <- function(connectionDetails,
       }
 
       maxSampleSize <- maxSampleSizeProp * numPersonsInDb
-
       if (maxSampleSize < 1000) {
         maxSampleStatus <- "fail"
         maxSampleFail <- 1
@@ -1019,7 +583,6 @@ executeDbDiagnostics <- function(connectionDetails,
         maxSampleStatus <- "pass"
         maxSampleFail <- 0
       }
-
       maxSample <- list(
         statistic = "maxSampleSize",
         value = maxSampleSize,
@@ -1032,7 +595,6 @@ executeDbDiagnostics <- function(connectionDetails,
       )
 
       dataDiagnosticsOutput <- rbind(dataDiagnosticsOutput, minSample, maxSample)
-
       dataDiagnosticsOutput <- dataDiagnosticsOutput %>%
         filter(evaluateThreshold > 0) %>%
         mutate(
@@ -1063,7 +625,6 @@ executeDbDiagnostics <- function(connectionDetails,
   CohortGenerator::writeCsv(dbDiagnosticsSummary, file.path(outputFolder, "data_diagnostics_summary.csv"))
 
   tempFileName <- tempfile()
-
   ddAnalysisToRow <- function(ddAnalysis) {
     ParallelLogger::saveSettingsToJson(ddAnalysis, tempFileName)
     row <- tibble(
@@ -1077,7 +638,6 @@ executeDbDiagnostics <- function(connectionDetails,
   dataDiagnosticsAnalysis <- lapply(dataDiagnosticsSettingsList, ddAnalysisToRow)
   dataDiagnosticsAnalysis <- bind_rows(dataDiagnosticsAnalysis) %>%
     distinct()
-
   unlink(tempFileName)
 
   fileName <- file.path(outputFolder, "data_diagnostics_analysis.csv")
