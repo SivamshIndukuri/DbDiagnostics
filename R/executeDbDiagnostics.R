@@ -102,7 +102,16 @@ executeDbDiagnostics <- function(connectionDetails,
       checkmate::assertString(studySpecs$studyStartDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
       checkmate::assertString(studySpecs$studyEndDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
       checkmate::assertIntegerish(studySpecs$requiredDurationDays, null.ok = FALSE)
+      
       allowed_visits <- c("IP", "OP", "ER")
+      if (!is.null(studySpecs$requiredVisits)) {
+      	checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE)
+      }
+
+      if (!is.null(studySpecs$desiredVisits)) {
+      	checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE)
+      }
+      
       checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
       checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
       checkmate::assertString(studySpecs$targetName, null.ok = FALSE)
