@@ -220,7 +220,7 @@ SELECT
 FROM @results_database_schema.@results_table_name
 WHERE analysis_id = 200
   AND release_key = '@databaseName'
-  AND visit_ancestor_concept_id IN (9201, 262)
+  AND CAST(visit_ancestor_concept_id AS INT) IN (9201, 262)
 
 UNION ALL
 
@@ -243,7 +243,7 @@ SELECT
 FROM @results_database_schema.@results_table_name
 WHERE analysis_id = 200
   AND release_key = '@databaseName'
-  AND visit_ancestor_concept_id IN (9202, 5083)
+  AND CAST(visit_ancestor_concept_id AS INT) IN (9202, 5083)
 
 UNION ALL
 
@@ -266,7 +266,7 @@ SELECT
 FROM @results_database_schema.@results_table_name
 WHERE analysis_id = 200
   AND release_key = '@databaseName'
-  AND visit_ancestor_concept_id IN (9203, 262)
+  AND CAST(visit_ancestor_concept_id AS INT) IN (9203, 262)
 
 UNION ALL
 
