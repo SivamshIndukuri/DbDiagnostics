@@ -128,9 +128,6 @@ executeDbDiagnostics <- function(connectionDetails,
 			    if (!is.null(studySpecs$desiredVisits)) {
 			      checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE)
 			    }
-			      
-			    checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
-			    checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
 			    checkmate::assertString(studySpecs$targetName, null.ok = FALSE)
 			    checkmate::assertIntegerish(studySpecs$targetConceptIds, null.ok = FALSE, min.len = 1)
 			    checkmate::assertString(studySpecs$comparatorName, null.ok = TRUE)
