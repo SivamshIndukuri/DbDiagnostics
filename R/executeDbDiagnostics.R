@@ -106,6 +106,41 @@ executeDbDiagnostics <- function(connectionDetails,
 				# TODO ---------------
 				# evaluate the specs input
 				# look at data types and stop if target concept id is null
+				if (is.null(studySpecs$targetConceptIds)) {
+			        stop("Need to specify targetConceptIds")
+			    }
+			    checkmate::assertIntegerish(studySpecs$analysisId, null.ok = FALSE, len = 1)
+			    checkmate::assertString(studySpecs$analysisName, null.ok = FALSE, min.chars = 1)
+			    checkmate::assertNumeric(studySpecs$minAge, null.ok = TRUE)
+			    checkmate::assertNumeric(studySpecs$maxAge, null.ok = TRUE)
+			    checkmate::assertIntegerish(studySpecs$genderConceptIds, null.ok = FALSE)
+			    checkmate::assertIntegerish(studySpecs$raceConceptIds, null.ok = TRUE)
+			    checkmate::assertIntegerish(studySpecs$ethnicityConceptIds, null.ok = TRUE)
+			    checkmate::assertString(studySpecs$studyStartDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
+			    checkmate::assertString(studySpecs$studyEndDate, null.ok = FALSE, min.chars = 6, max.chars = 6)
+			    checkmate::assertIntegerish(studySpecs$requiredDurationDays, null.ok = FALSE)
+			      
+			    allowed_visits <- c("IP", "OP", "ER")
+			    if (!is.null(studySpecs$requiredVisits)) {
+			      checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE)
+			    }
+			
+			    if (!is.null(studySpecs$desiredVisits)) {
+			      checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE)
+			    }
+			      
+			    checkmate::assertSubset(studySpecs$requiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
+			    checkmate::assertSubset(studySpecs$desiredVisits, choices = allowed_visits, empty.ok = FALSE, null.ok = TRUE)
+			    checkmate::assertString(studySpecs$targetName, null.ok = FALSE)
+			    checkmate::assertIntegerish(studySpecs$targetConceptIds, null.ok = FALSE, min.len = 1)
+			    checkmate::assertString(studySpecs$comparatorName, null.ok = TRUE)
+			    checkmate::assertIntegerish(studySpecs$comparatorConceptIds, null.ok = TRUE)
+			    checkmate::assertString(studySpecs$indicationName, null.ok = TRUE)
+			    checkmate::assertIntegerish(studySpecs$indicationConceptIds, null.ok = TRUE)
+			    checkmate::assertLogical(studySpecs$includeIndicationInCalc, null.ok = FALSE)
+			    checkmate::assertString(studySpecs$outcomeName, null.ok = TRUE)
+			    checkmate::assertIntegerish(studySpecs$outcomeConceptIds, null.ok = TRUE)
+			    # ---------------
 
 
 				# Get the thresholds for the study -------------------------------------------
