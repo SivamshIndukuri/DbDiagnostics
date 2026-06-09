@@ -578,8 +578,8 @@ executeDbDiagnostics <- function(connectionDetails,
 				rename("statistic" = "V1",
 							 "value" = "numMeasRecordsWithValues",
 							 "proportion" = "propMeasRecordsWithValues") %>%
-				mutate(spec = case_when(desiredObservation == 1 ~ 'Measurements with values desired',
-																desiredObservation == 0 ~ 'Measurements with values not desired'),
+				mutate(spec = case_when(desiredMeasurementValues == 1 ~ 'Measurements with values desired',
+																desiredMeasurementValues == 0 ~ 'Measurements with values not desired'),
 							 evaluateThreshold = desiredMeasurementValues)
 
 			finalOutput <- rbind(finalOutput, measRecordsWithValues)
